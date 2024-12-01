@@ -1,0 +1,270 @@
+---
+title: "Assignment 5"
+author: "Xiangling Chen"
+date: "2024-10-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Call the Library
+```{r load_libraries}
+### load sf, tmap, and tidyverse
+library(tidyverse)
+library(sf)
+library(tmap)
+```
+
+## Loading the Data
+```{r load-data}
+### load nc_schools data to read
+###!!!! very important: no space in the ""
+nc_schools <- read_sf("https://drive.google.com/uc?export=download&id=1hFPUSj5s-sApJKC5Vh5Ue5wpF_1gbClO")
+glimpse(nc_schools)
+```
+
+```{r read_data}
+### load nc_counties data to read
+nc_counties <- read_sf("https://drive.google.com/uc?export=download&id=1hbaRC3hu6h9IMN4sNjY_BJhHyMTpMIT9")
+glimpse(nc_counties)
+```
+
+## Our Study Area
+```{r locate nc schools}
+### Map the location
+map1<-tm_shape(nc_schools) + tm_dots(col="red")
+map2<- tm_shape(nc_counties) +tm_polygons("gray")
+map2 + map1
+```
+
+# Analysis of Public Schools in Durham and Orange Counties, 2018-2022
+
+## Selecting Our Data
+```{r filter DO county}
+### Select Counties
+od_counties <-nc_counties|>
+  filter(County == "Durham" | County == "Orange")
+glimpse(od_counties)
+```
+
+```{r select DO schools}
+### Select schools
+od_schools <-nc_schools|>
+  filter(county == "Orange"|county == "Durham")|>
+  filter(sch_desg!="Charater")
+glimpse(od_schools)
+```
+
+## Plot the Local Schools
+```{r map-local school}
+map2<-tm_shape(od_counties) + tm_polygons(col = "grey")
+map1 <-tm_shape(od_schools) + tm_dots(col="red")
+map2+map1 + tm_layout(title="Orange and Durham County Schools")
+```
+
+```{r modify-map}
+### Modified dots and add the title
+map2<-tm_shape(od_counties) + tm_polygons(col = "grey")
+map1 <-tm_shape(od_schools) + tm_dots("bgn_grade", scale=4)
+map2+map1+tm_layout(title="Orange and Durham County")
+```
+
+```{r calculate OD fail rate}
+### Map local schools fail rate
+map2<-tm_shape(od_counties) + tm_polygons(col = "grey")
+map1 <-tm_shape(od_schools) + tm_dots("pct_notprof_1819", scale=4)
+map2+map1+ tm_layout(title="Orange & Durham Schools, % Fail 2018-2019")
+```
+
+## Computing Values
+```{r computing_od_values}
+### Compute num of studetns pass/fail at each school
+od_schools <- od_schools |>
+  #remove any null values
+  drop_na(num_tested_1819, num_tested_2021,num_tested_2122)|>
+  mutate(num_fail_1819 = round(num_tested_1819*pct_notprof_1819/100))|>
+  mutate(num_fail_2021 = round(num_tested_2021*pct_notprof_2021/100))|>
+  mutate(num_fail_2122 = round(num_tested_2122*pct_notprof_2122/100))|>
+  mutate(num_pass_1819  = round(num_tested_1819 - num_fail_1819))|>
+  mutate(num_pass_2021  = round(num_tested_2021 - num_fail_2021))|>
+  mutate(num_pass_2122  = round(num_tested_2122 - num_fail_2122))
+glimpse(od_schools)
+```
+
+```{r mutate od pass_rate}
+od_schools<-od_schools|>
+  mutate(total_pass = num_pass_1819 +num_pass_2021+num_pass_2122)|>
+  mutate(total_tested = num_tested_1819+num_tested_2021+num_tested_2122)|>
+  mutate(pct_pass = total_pass/total_tested*100)
+glimpse(od_schools)
+```
+
+```{r map od study area}
+#Let's map our study area
+map1<-tm_shape(od_schools) + tm_dots("pct_pass", scale = 3)
+map2<-tm_shape(od_counties) +tm_polygons(col = "gray")
+map2+map1+tm_layout(title = "Orange & Durham Schools, % Pass")
+```
+
+```{r create od data frame}
+# Create a data frame of values per county, including totals
+od_schools_summary<- as.data.frame(od_schools)|>
+  # Select just the columns we need
+  select(county, total_tested, total_pass)|>
+  #sum by county
+  group_by(county)|>
+  #this says to sum each column
+  summarize(across(total_tested:total_pass, sum))|>
+  #let's compute the pass pct for each county
+  mutate(pass_pct = total_pass/total_tested*100)
+glimpse(od_schools_summary)
+```
+
+## Yearly Trend
+```{r od_yearly trend}
+# create a data frame of values per county, including totals
+od_schools_summary2<-as.data.frame(od_schools) |>
+  #select just the columns we need
+  select(county, num_tested_1819, num_tested_2021, num_tested_2122, num_pass_1819, num_pass_2021, num_pass_2122)|>
+  #sum by county
+  group_by(county)|>
+  summarize(across(num_tested_1819:num_pass_2122,sum))|>
+  #let's compute the pass pct for each year
+  mutate(pass_pct_1819 = num_pass_1819/num_tested_1819*100)|>
+  mutate(pass_pct_2021 = num_pass_2021/num_tested_2021*100)|>
+  mutate(pass_pct_2122 = num_pass_2122/num_tested_2122*100)|>
+  #and just return the columns that we need
+  select(county, pass_pct_1819, pass_pct_2021, pass_pct_2122)
+glimpse(od_schools_summary2)
+```
+
+```{r rearrange_od_data}
+od_schools_summary2|>
+  # wehave to rearrange our data so that it'll work with ggplot
+  pivot_longer(pass_pct_1819:pass_pct_2122)|>
+  #ggplot() is a plotting function
+  ggplot()+geom_point(mapping = aes(x=name,y=value, color=county),size=3)
+```
+
+# Analysis of Public Schools in Camden and Gates Counties, 2018-2022
+```{r filter cg_county}
+cg_counties<-nc_counties|>
+  filter(County == "Camden"|County =="Gates")
+glimpse(cg_counties)
+```
+
+```{r select_cg_schools}
+### select schools
+cg_schools<-nc_schools|>
+  filter(county == "Camden"|county =="Gates")|>
+  filter(sch_desg!="Charater")
+glimpse(cg_schools)
+```
+
+## Plot the Local Schools
+```{r map_cg_local schools}
+map2<-tm_shape(cg_counties) + tm_polygons(col = "grey")
+map1 <-tm_shape(cg_schools) + tm_dots(col="red")
+map2+map1 + tm_layout(title="Camden and Gates County Schools")
+```
+
+```{r modify cg_map}
+### Modified dots and add the title
+map2<-tm_shape(cg_counties) + tm_polygons(col = "grey")
+map1 <-tm_shape(cg_schools) + tm_dots("bgn_grade", scale=4)
+map2+map1+tm_layout(title="Camden and Gates County")
+```
+
+```{r map_cg_fail_rate}
+### Map local schools fail rate
+map2<-tm_shape(cg_counties) + tm_polygons(col = "grey")
+map1 <-tm_shape(cg_schools) + tm_dots("pct_notprof_1819", scale=4)
+map2+map1+ tm_layout(title="Camden & Gates Schools, % Fail 2018-2019")
+```
+
+## Computing Values
+```{r computing_cg_values}
+### Compute num of studetns pass/fail at each school
+cg_schools <- cg_schools |>
+  #remove any null values
+  drop_na(num_tested_1819, num_tested_2021,num_tested_2122)|>
+  mutate(num_fail_1819 = round(num_tested_1819*pct_notprof_1819/100))|>
+  mutate(num_fail_2021 = round(num_tested_2021*pct_notprof_2021/100))|>
+  mutate(num_fail_2122 = round(num_tested_2122*pct_notprof_2122/100))|>
+  mutate(num_pass_1819  = round(num_tested_1819 - num_fail_1819))|>
+  mutate(num_pass_2021  = round(num_tested_2021 - num_fail_2021))|>
+  mutate(num_pass_2122  = round(num_tested_2122 - num_fail_2122))
+glimpse(cg_schools)
+```
+
+```{r cg_pass_Rate}
+cg_schools<-cg_schools|>
+  mutate(total_pass = num_pass_1819 +num_pass_2021+num_pass_2122)|>
+  mutate(total_tested = num_tested_1819+num_tested_2021+num_tested_2122)|>
+  mutate(pct_pass = total_pass/total_tested*100)
+glimpse(cg_schools)
+```
+
+```{r map_cg_study_area}
+#Let's map our study area
+map1<-tm_shape(cg_schools) + tm_dots("pct_pass", scale = 3)
+map2<-tm_shape(cg_counties) +tm_polygons(col = "gray")
+map2+map1+tm_layout(title = "Candem & Gates Schools, % Pass")
+```
+
+```{r create_cg_dataframe}
+# Create a data frame of values per county, including totals
+cg_schools_summary<- as.data.frame(cg_schools)|>
+  # Select just the columns we need
+  select(county, total_tested, total_pass)|>
+  #sum by county
+  group_by(county)|>
+  #this says to sum each column
+  summarize(across(total_tested:total_pass, sum))|>
+  #let's compute the pass pct for each county
+  mutate(pass_pct = total_pass/total_tested*100)
+glimpse(cg_schools_summary)
+```
+
+```{r create_summary}
+# create a data frame of values per county, including totals
+cg_schools_summary2<-as.data.frame(cg_schools) |>
+  #select just the columns we need
+  select(county, num_tested_1819, num_tested_2021, num_tested_2122, num_pass_1819, num_pass_2021, num_pass_2122)|>
+  #sum by county
+  group_by(county)|>
+  summarize(across(num_tested_1819:num_pass_2122,sum))|>
+  #let's compute the pass pct for each year
+  mutate(pass_pct_1819 = num_pass_1819/num_tested_1819*100)|>
+  mutate(pass_pct_2021 = num_pass_2021/num_tested_2021*100)|>
+  mutate(pass_pct_2122 = num_pass_2122/num_tested_2122*100)|>
+  #and just return the columns that we need
+  select(county, pass_pct_1819, pass_pct_2021, pass_pct_2122)
+glimpse(cg_schools_summary2)
+```
+
+```{r map_cg_schools_rearranged}
+cg_schools_summary2|>
+  # we have to rearrange our data so that it'll work with ggplot
+  pivot_longer(pass_pct_1819:pass_pct_2122)|>
+  #ggplot() is a plotting function
+  ggplot()+geom_point(mapping = aes(x=name,y=value, color=county),size=3)
+```
+
+#Reflection Questions
+## 1. How long did the assignment take you to complete?
+It takes me 3 hrs
+
+## 2.Where did you get stuck? Where did you go for help?
+I was stuck at understanding the ggplot, and I got help from the later class(the class on Wednesday)
+
+## 3.Did you find any errors in the assignment?
+Before I read the second part of filtering the county, I was kind of confused about the "&" used for filtering the Orange or Durham, but when I continue to read the HTML,Dr.Parr corrected it.
+
+## 4.What did you find most useful about working with the tidy process?
+I really like the all the process, especially the ggplot function. I like to see the visualization of the data.
+
+## 5. What would you advise for someone starting out with tidy?
+Be careful with the syntax and there are so many things you can play with. Not only the data but also the graphs.
