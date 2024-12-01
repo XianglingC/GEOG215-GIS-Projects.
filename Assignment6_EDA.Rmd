@@ -1,0 +1,286 @@
+---
+title: "Assignment 6"
+author: "Xiangling Chen"
+date: "2024-10-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load-libraries}
+# Load sf,tmap and tidyverse
+library(sf)
+library(tmap)
+library(tidyverse)
+```
+
+## Loading the data
+```{r load-data}
+## Loading the nc_schools data
+nc_schools <- read_sf("https://drive.google.com/uc?export=download&id=1hFPUSj5s-sApJKC5Vh5Ue5wpF_1gbClO")
+glimpse(nc_schools)
+
+## Loading nc_county data
+nc_counties <-read_sf("https://drive.google.com/uc?export=download&id=1Ks38Gmdlp58GBhOgb6FBmx8tIAfu0QDw")
+glimpse(nc_counties)
+```
+
+# Exploratory Data Analysis
+```{r county-population-eda}
+#Summarize the population data looking at descriptive stats
+nc_counties|>
+  drop_na(popE)|>
+  summarize(count =n(),
+            "smallest county"=min(popE),
+            "25% quantile"=quantile(popE, probs=c(.25)),
+            "average size" = mean(popE),
+            "median size" = median(popE),
+            "75% quantile" = quantile(popE, probs=c(.75)),
+            "largest county" = max(popE),
+            variance = var(popE))|>
+  glimpse()
+```
+
+```{r boxplot for popE}
+# Making boxplot of population values for NC counties
+nc_counties|>
+  drop_na(popE)|>
+  ggplot(aes(x="popE", y=popE)) +geom_boxplot()
+```
+
+```{r counties -population-map}
+# Map the counties with the population
+map1<-tm_shape(nc_counties)+
+  tm_polygons("popE")+
+  tm_layout(title = "Population 2020")
+map1
+```
+
+```{r jenks-classification style}
+# Map the counties with the population using the Jenks Classification method
+mao1<-tm_shape(nc_counties) + tm_polygons("popE", style ="jenks")+tm_layout(title="Population 2020")
+map1
+```
+
+```{r counties-popdens-map}
+# calculate area and population density for each county
+nc_counties<-nc_counties|>
+  #calculate the area per county in meter sq
+  mutate(area=st_area(nc_counties))|>
+  #calculate the population density in kms sq
+  mutate(popdens = units::set_units(popE/area,"1/km^2"))
+tm_shape(nc_counties)+tm_polygons("popdens",style = "jenks") +tm_layout(title="North Carolina 2020 Populatioin Density")
+```
+
+```{r popdens-distribution}
+# we need the units library to display the units
+library(units)
+
+# make a boxplot of population density for NC counties
+nc_counties|>
+  drop_na(popdens)|>
+  ggplot(aes(y=popdens))+geom_boxplot()
+```
+
+```{r county-population-density-eda} 
+nc_counties|>
+  drop_na(popdens)|>
+  summarize(count = n(),
+            "smallest county"=min(popdens),
+            "25% quantile"=quantile(popdens,probs = c(.25)),
+            "average size"=mean(popdens),
+            "75% quantile"=quantile(popdens,probs = c(.75)),
+            "largest county"=max(popdens),
+            variance = var(popdens))|>
+  glimpse()
+```
+
+```{r counting-missing-values}
+# for each column in nc_schools, count the missing values
+nc_schools|>
+  # select all columns-everything
+  select(everything())|>
+  # sum the values that are NA(is.na == TRUE) 
+  #the ~ says to run the code on each column
+  # and the. in is.na(.)substitues the value from the column
+  summarize_all(list(~sum(is.na(.))))|>
+  glimpse()
+```
+
+```{r school-data-eda}
+# Summarize the populaiton density looking at descriptive stats
+as.data.frame(nc_schools)|>
+  select(num_tested_1819:pct_notprof_2122)|>
+  summarize_all(.funs=list(min=~min(.,na.rm=TRUE),
+                           Q1=~quantile(x=.,probs=c(.25),na.rm=TRUE),
+                           mean=~mean(.,na.rm=TRUE),
+                           median=~median(.,na.rm=TRUE),
+                           Q3=~quantile(x=.,probs=c(.75),na.rm=TRUE),
+                           max=~max(.,na.rm=TRUE),
+                           var=~var(.,na.rm=TRUE)
+                           ))|>
+  glimpse()
+```
+
+# Boxplots for Variable
+```{r boxplots-for-variable}
+# make boxplots for the number tested
+
+# this removes the geometry(spatial) data
+as.data.frame(nc_schools)|>
+  #select only the columns we are about
+  select(num_tested_1819:num_tested_2122)|>
+  # pivot_longer moves the columns to rows, which make it easier to graph
+  pivot_longer(num_tested_1819:num_tested_2122,names_to="names",values_to="values")|>
+  #graph it
+  ggplot(aes(x=names, y=values))+geom_boxplot()
+```
+
+
+
+```{r change-outlier}
+as.data.frame(nc_schools)|>
+  select(pct_notprof_1819:pct_notprof_2122)|>
+  pivot_longer(pct_notprof_1819:pct_notprof_2122, names_to="names", values_to="values")|>
+  ggplot(aes(x=names, y=values))+geom_boxplot()
+```
+
+## Handling Null(NA) Values
+```{r replace_nas_with_0}
+# replace all null no-data values with 0's
+# replace all NA values with 0's in relevant columns
+nc_schools.new <- nc_schools |>
+  mutate(across(c(num_tested_1819:num_tested_2122, 
+                  pct_notprof_1819:pct_notprof_2122), 
+                ~replace_na(.x, 0)))
+```
+
+```{r pass-rate-per-county}
+# calculate, per school, the fail and pass rate
+nc_schools.new<-nc_schools.new |>
+  mutate(num_fail_1819 = num_tested_1819*pct_notprof_1819/100,
+         num_fail_2021 = num_tested_2021*pct_notprof_2021/100,
+         num_fail_2122 = num_tested_2122*pct_notprof_2122/100)|>
+  mutate(num_pass_1819 = num_tested_1819-num_fail_1819,
+         num_pass_2021 = num_tested_2021-num_fail_2021,
+         num_pass_2122 = num_tested_2122-num_fail_2122)
+# calculate the pass rate per county
+# convert the data to data frame to remove geometry
+per_county<-as.data.frame(nc_schools.new)|>
+  #get county level statistics
+  group_by(county)|>
+  # compuste the num tested and pass per school
+  mutate(num_tested = num_tested_1819+num_tested_2021+num_tested_2122,num_pass = num_pass_1819 + num_pass_2021+num_pass_2122)|>
+  #add up the num tested and pass per county
+  summarize(across(num_tested:num_pass,sum),numschools=n())|>
+  #compute the per conty pass rate
+  mutate(pass_pct = num_pass/num_tested *100)
+glimpse(per_county)
+```
+
+```{r change the name}
+glimpse(sort(nc_counties$NAME))
+```
+
+```{r join-to-county}
+# create a new data frame from nc counties
+nc_counties.new<-nc_counties|>
+  mutate(name=str_replace(NAME,' County, North Carolina',''))
+glimpse(nc_counties.new)
+```
+
+```{r join-data}
+# join the per_county data and the nc_counties.new.data data together
+nc_counties.new<-nc_counties.new |>
+  # match name to county
+  inner_join(per_county, by=c("name"="county"))
+glimpse(nc_counties.new)
+```
+
+```{r map the data}
+tm_shape(nc_counties.new)+
+  tm_polygons("pass_pct")+
+  tm_layout(title = "North Carolina 2019-2022 % Student Pass Rate")
+```
+
+```{r categorize_popdens}
+nc_counties.new<-drop_units(nc_counties.new)
+nc_counties.new<-nc_counties.new|>
+  mutate(popdens.description = ifelse(popdens<24,"smallest",ifelse(popdens<42,"small",ifelse(popdens<85,"large","largest"))))
+glimpse(nc_counties.new$popdens.description)
+```
+
+```{r new-box-plot}
+nc_counties.new|>
+  ggplot(aes(y=pass_pct, x=popdens.description))+geom_boxplot()
+```
+
+```{r new-jitter-plot}
+# jitter plot show the individual points
+nc_counties.new |>
+  ggplot(aes(x=popdens.description, y=pass_pct,color=popdens.description)) + geom_jitter()
+```
+
+```{r ANOVA test}
+# ANOVA looks at the variance
+result<-aov(pass_pct~popdens.description, dat=nc_counties.new)
+summary(result)
+```
+
+## Part 6: Making My own EDA(FemaleE)
+```{r femaleE data ploting}
+# a)Using tmap to draw the female population in the county
+tm_shape(nc_counties.new)+tm_polygons("femaleE",style ="jenks") + tm_layout(title= "females number in NC Counties")
+```
+```{r ggplot-for the boxplots}
+# b) Making boxplot for the values
+nc_counties|>
+  drop_na(femaleE)|>
+  ggplot(aes(x="femaleE",y=femaleE)) + geom_boxplot()
+```
+
+```{r printing descriptive variable}
+nc_counties.new|>
+  drop_na(femaleE)|>
+  summarise(count=n(),
+            "smallest"=min(femaleE),
+            "25% quantile" = quantile(femaleE,probs = (.25)),
+            "average size" = mean(femaleE),
+            "75% quantile" = quantile(femaleE, probs = c(.75)),
+            "largest female number" = max(femaleE),
+            variance = var(femaleE))|>
+  glimpse()
+```
+
+```{r create a group for variable}
+nc_counties.new<-drop_units(nc_counties.new)
+nc_counties.new <- nc_counties.new |>
+  mutate(femaleE.description = ifelse(femaleE < 10000, "small", ifelse(femaleE < 20000, "medium", "large")))
+glimpse(nc_counties.new$femaleE.description)
+table(nc_counties.new$femaleE.description)
+```
+
+```{r making anova test}
+nc_counties.new$femaleE.description <- as.factor(nc_counties.new$femaleE.description)
+result_2 <- aov(pass_pct ~ femaleE.description, data = nc_counties.new)
+summary(result_2)
+```
+
+# Part 7 Reflection Question
+
+## 1.How long did the assignment take you to complete?
+3hrs
+
+## 2.Where did you get stuck? Where did you go for help?
+The categorization for the femaleE variable, I ask the chatgpt for clearification and also went to the office hour, know the usage of the ifelse()function
+
+## 3.Did you find any errors in the assignment?
+Not yet
+
+## 4.What did you find most useful about working with the tidy process?
+First time, I have a feeling of we are finally working on real data and ask question and solve it.
+
+## 5. What would you advise for someone starting out with tidy?
+See the dataframe first to know what data we have and also what data range we have.
