@@ -1,0 +1,582 @@
+---
+title: "GEOG 215 Project"
+author: "Lilly Tyler, Xiangling Chen, Luke Blackwelder"
+date: "2024-11-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project Task #1
+
+### Topic
+
+  We will be looking at the relationship between hurricane risk and the spatial distribution of socio-economic vulnerability in coastal areas of North Carolina.
+  
+### Research Question
+
+  What is the relationship between high hurricane risk and low income levels along North Carolina's coast? In what census tracts can we identify co-occurrence of high hurricane risk and high proportions of low income households? 
+  
+
+### Interest
+
+  In the context of recent catastrophic hurricanes in the U.S. and North Carolina specifically, we thought it would be interesting to conduct analysis that highlights the intersection of socio-economic vulnerability (lower income, poverty status) and hurricane risk. Conclusions drawn on what areas of North Carolina's coast exhibit both high hurricane risk and high levels of vulnerability could be of service in the areas of public policy and disaster response. Resources distributed and aid provided with dynamics of vulnerability in mind could be more effective than without such context.
+
+##### Source 1
+https://www.census.gov/library/stories/2024/10/hurricane-helene.html
+  This article explores Hurricane Helene’s impact on those with high social vulnerability to disasters. The variable of “social vulnerability” is measured by looking at factors ranging from poverty and education to age and broadband access. This article’s purpose is very similar to our research question, but zeros in more specifically on Hurricane Helene’s impact in Western North Carolina. We think it will be interesting to explore socio-economic vulnerability to hurricanes along the coast of North Carolina and see how our results compare.
+
+
+##### Source 2
+https://portcitydaily.com/latest-news/2024/08/22/advocates-support-storm-resiliency-funding-for-low-income-minority-housing/
+
+  This article touches on the implications of analysis such as ours. By identifying areas or populations of higher socio-economic vulnerability along NC’s coast, more attention can be given to improving their resilience capacity and the disaster response and aid services available to them in the event of a hurricane. Policy like storm resiliency funding needs data compiled on the areas of highest need in order to be optimally effective.
+
+
+### Data
+
+  Our main layer will depict the variable of hurricane risk along the North Carolina coast. This data will be sourced from FEMA's National Risk Index of Hurricane frequency, which is organized at the county and census level. We will then measure various US census variables (income and earnings, poverty status, food stamps/SNAP) alongside the data on hurricane risk in an attempt to observe any patterns and reveal any areas of high socio-economic risk in our sample area.
+  
+  It is likely that we will end up conducting county- or city-based analysis and using census data organized along that geographic category. This will determine the geographic resolution, with a city-based analysis obviously producing a larger scale map in comparison to county-based analysis.
+  
+### Methods
+  To begin answering our research question, we had to first import our data into R and filter for only the census tracts within the coastal counties of North Carolina. We used U.S. census data for our income variable and FEMA National Risk index data for our hurricane risk variable.
+  We ran descriptive statistics on the median household income variable within the census data. Next, we defined income thresholds based on the quartiles observed in the descriptive statistics. Using those thresholds, we classified each tract as “Low Income,” Middle Income,” or “High Income.” We created a map displaying the income categories of each census tract.
+  We also ran descriptive statistics on the hurricane risk variable from the FEMA dataset. We did not have to define risk level categories because the FEMA dataset included a variable that did so. We used this risk rating variable to map the risk level category for each census tract.
+  Next, we created a mean center function and calculated the weighted mean center for median income in the census tracts within the coastal counties. We also added a standard circle function and created a map depicting the standard circle for the median income variable across the focus area. 
+  We then ran hot spot analyses on both the median income and hurricane risk variable for the focus area. 
+
+
+## Exploratory Spatial Data Analysis
+
+### Our Data
+
+#### Where did it come from?
+U.S. Census Bureau (American Community Survey) and FEMA
+
+#### How large is it?
+Both datasets contain information at the Census Tract level for all counties in North Carolina.
+
+#### What is the resolution?
+The data covers coastal counties of North Carolina.
+
+#### What time is it for/from?
+The census data is from the year 2020, while the hurricane risk index data is from 2023.
+
+### Descriptive Statistics
+
+```{r data-setup}
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(tmap)
+
+# use your API key to access the data
+census_api_key("bd88bfaa00bf9686502e56c0d7b424ef633c87ef", install = TRUE, overwrite = TRUE)
+```
+
+
+```{r data-setup2}
+vars<- load_variables(2020,"acs5",cache = TRUE)|>
+  filter(geography!="state" & geography !="us")
+glimpse(vars)
+```
+
+```{r nc-census-data}
+# Get the Census tract data for North Carolina (State FIPS code = 37)
+nc_data <- get_acs(geography = "tract", 
+                   variables ="B19013_001E", # Median Household Income
+                   state = "NC", 
+                   year = 2020, 
+                   output ="wide",
+                   geometry = TRUE)
+
+glimpse(nc_data)
+```
+
+```{r nc-coastal counties}
+# Coastal counties of NC
+coastal_counties <- c("Beaufort", "Bladen", "Brunswick", "Carteret", "Chowan", "Columbus", "Craven", "Currituck", "Dare", "Duplin", "Franklin","Gates", "Greene", "Hoke", "Hyde", "Jones", "Lenoir", "Martin", "Nash", "New Hanover", "Northampton", "Onslow", "Pamlico", "Pender", "Perquimans", "Pitt", "Robeson", "Sampson", "Tyrrell", "Washington",  "Wayne", "Wilson")
+
+# Filter the data for only coastal counties
+coastal_nc_data <- nc_data |>
+  filter(str_detect(NAME, paste(coastal_counties, collapse = "|")))
+
+coastal_nc_data <- coastal_nc_data |>
+  drop_na(B19013_001E)
+
+glimpse(coastal_nc_data)
+```
+### Descriptive Statistics
+
+```{r}
+# Summary of median household income in the coastal counties
+summary(coastal_nc_data$B19013_001E)
+
+# Mean, median, and standard deviation
+mean_income <- mean(coastal_nc_data$B19013_001E, na.rm = TRUE)
+median_income <- median(coastal_nc_data$B19013_001E, na.rm = TRUE)
+sd_income <- sd(coastal_nc_data$B19013_001E, na.rm = TRUE)
+```
+
+### Initial Maps
+
+```{r}
+
+library(tmap)
+library(sf)
+
+```
+
+```{r}
+# Check for invalid geometries and repair them
+coastal_nc_data <- coastal_nc_data |> 
+  st_make_valid() |> # Fix invalid geometries
+  filter(!st_is_empty(geometry)) # Remove empty geometries
+
+```
+
+```{r}
+# Define income thresholds
+low_income_threshold <- 40000  # Example threshold for low income
+high_income_threshold <- 80000 # Example threshold for high income
+
+```
+
+```{r}
+# Add a new column to classify tracts based on median household income
+coastal_nc_data <- coastal_nc_data |> 
+  mutate(income_category = case_when(
+    B19013_001E < low_income_threshold ~ "Low Income",
+    B19013_001E >= low_income_threshold & B19013_001E < high_income_threshold ~ "Middle Income",
+    B19013_001E >= high_income_threshold ~ "High Income",
+    TRUE ~ "Unknown" # Catch NA or unexpected values
+  ))
+
+coastal_nc_data <- st_transform(coastal_nc_data, "EPSG:32119")
+
+st_crs(coastal_nc_data)
+
+```
+
+```{r}
+
+# Create a thematic map
+tm_map <- tm_shape(coastal_nc_data) +
+  tm_fill(col = "income_category" ,
+          title = "Income Category",
+          palette = c("green", "yellow", "red"), # Colors for Low, Middle, High
+          labels = c("High Income", "Low Income", "Middle Income")) +
+  tm_borders() +
+  tm_layout(title = "Median Household Income Categories in NC",
+            legend.outside = TRUE)
+
+# Plot the map
+tm_map
+
+```
+
+### Spatial Statistics
+
+#### Mean Center
+```{r mean-center-function}
+
+# create a mean center function
+meanCenter <- function(layer, weights=NULL) {
+  # convert data into points
+  points <- st_centroid(layer)
+  
+  # if weights is null, then create weights of 1
+  if (is.null(weights)) {
+    weights <- rep(c(1), times=nrow(layer))
+  }
+  
+  # calculate the x & y coordinates
+  mc_x <- weighted.mean(st_coordinates(points$geometry) [,1], weights)
+  mc_y <- weighted.mean(st_coordinates(points$geometry) [,2], weights)
+  
+  # create a point
+  mean_center <- st_sfc(st_point(c(mc_x, mc_y)))
+  # add a projection
+  mean_center <- st_set_crs(mean_center, st_crs(layer))
+  # return the object
+  mean_center
+}
+
+```
+
+```{r mean-center-income}
+
+# calculate the mean center and weighted mean center for median income
+mc <- meanCenter(coastal_nc_data)
+mc_income <- meanCenter(coastal_nc_data, coastal_nc_data$B19013_001E)
+
+```
+
+```{r map-mean-center}
+
+# map the points
+map1 <- tm_shape(mc) + tm_dots(col="black", size=.5)
+map2 <- tm_shape(mc_income) + tm_dots(col="lightgreen", size=.5)
+map3 <- tm_shape(coastal_nc_data) + tm_polygons("B19013_001E")
+map3 + map2 + map1 + tm_layout(title="Mean Center of Coastal NC Median Income")
+
+```
+#### Standard Circle
+
+```{r standard-circle-function}
+
+# add standard circle function
+stdCircle <- function(layer, weights=NULL) {
+  points <- st_centroid(layer)
+  
+  # if weights is null, then create weights of 1
+  if (is.null(weights)) {
+    weights <- rep(c(1), times=nrow(layer))
+  }
+  
+  # calculate the x & y coordinates
+  mc_x <- weighted.mean(st_coordinates(points$geometry)[,1], weights)
+  mc_y <- weighted.mean(st_coordinates(points$geometry)[,2], weights)
+  mean_center <- meanCenter(layer, weights)
+  
+  # calculate the standard distance
+  sd <- sqrt((sum(weights *
+                    (st_coordinates(points$geometry)[,1] - mc_x)^2)
+                    / sum(weights)) +
+               (sum(weights *
+                        (st_coordinates(points$geometry)[,2] - mc_y)^2)
+                        / sum(weights)))
+  
+  # buffer the mean center with the standard distance
+  std_circle <- st_buffer(mean_center, sd)
+  
+  # return the std_circle
+  std_circle
+}
+
+```
+
+``` {r}
+
+# calculate standard circles for median income
+std_circle_income <- stdCircle(coastal_nc_data, coastal_nc_data$B19013_001E)
+
+
+
+# map standard circles
+map1 <- tm_shape(coastal_nc_data) + tm_polygons("B19013_001E")
+map2 <- tm_shape(std_circle_income) + tm_polygons("black", alpha=.3)
+
+
+
+map1 + map2 + tm_layout(title="Standard Circle of Coastal NC Median Income")
+```
+
+### Hot Spot Analysis
+
+```{r}
+
+# call the sfdep library - we'll use this now and later
+library(sfdep)
+library(spdep)
+
+# make a list of neighbors
+list_nb <- poly2nb(coastal_nc_data, queen=TRUE)
+# find the polygons with no neighbors (0)
+empty_nb <- which(card(list_nb) == 0)
+# remove the empty neighbors from the data and create a new dataset
+coastal_nc_data_no_empty <- coastal_nc_data[-empty_nb,]
+
+# create the neighborhoods and weights
+nbhds <- st_contiguity(coastal_nc_data_no_empty, queen=TRUE)
+wts <- st_weights(nbhds, style="W")
+
+# calculate the global moran's I statistic
+moran <- global_moran(coastal_nc_data_no_empty$B19013_001E, nbhds, wts)
+moran
+
+```
+
+```{r hot-spot-analysis}
+
+# define the neighborhoods and convert to a list
+nb_coast <- poly2nb(coastal_nc_data_no_empty, queen = TRUE)
+coast_binary <- nb2listw(nb_coast, style="B")
+
+# run the global G test on population
+globalG.test(coastal_nc_data_no_empty$B19013_001E, coast_binary)
+
+# now add data per county
+coast_nbs <- coastal_nc_data_no_empty |>
+  mutate(
+    nb = st_contiguity(geometry),
+    wt = st_weights(nb),
+    lag = st_lag(B19013_001E, nb, wt)
+  )
+
+# now run the hot spot analysis on each county
+coastal_hot_spots <- coast_nbs |>
+  mutate(
+    Gi = local_g_perm(B19013_001E, nb, wt, nsim=999)
+  ) |>
+  unnest(Gi)
+
+```
+
+```{r}
+# Plot the graph
+coastal_hot_spots |>
+  select(gi,p_folded_sim)|>
+  mutate(
+    classification = case_when(
+      gi > 0 & p_folded_sim <= 0.01 ~"very hot",
+      gi > 0 & p_folded_sim <= 0.05 ~"hot",
+      gi > 0 & p_folded_sim <= 0.1 ~ "somewhat hot",
+      gi < 0 & p_folded_sim <= 0.01 ~ "very cold",
+      gi < 0 & p_folded_sim <= 0.05 ~ "cold",
+      gi < 0 & p_folded_sim <= 0.1 ~ "somewhat cold",
+      TRUE ~ "Insignificant"
+      ),
+    classification = factor(
+      classification, 
+      levels = c("very hot", "hot", "somewhat hot", "Insignificant", "somewhat cold","cold","very cold")
+    )
+  )|>
+  
+ggplot(aes(fill = classification)) +
+  geom_sf(color = "black", lwd = 0.1) + scale_fill_brewer(type = "div", palette = 5)+
+  theme_void()+
+  labs(
+    fill = "Hotspot Analysis of Coastal income Scores", 
+    title = "Hot spot for coastal income scores"
+)
+```
+
+### Descriptive Statistics for Hurricane Risk Variable
+
+``` {r add-hurricane-data}
+library(arcpullr)
+
+hurricane_risk <- get_spatial_layer("https://services.arcgis.com/XG15cJAlne2vxtgt/ArcGIS/rest/services/National_Risk_Index_Census_Tracts/FeatureServer/0", where = "STATEABBRV = 'NC'")
+
+```
+
+
+```{r filter-coastal-counties}
+
+coastal_hurricane_risk <- hurricane_risk |>
+  filter(COUNTY %in% c("Beaufort", "Bladen", "Brunswick", "Carteret", "Chowan", "Columbus", "Craven", "Currituck", "Dare", "Duplin", "Franklin","Gates", "Greene", "Hoke", "Hyde", "Jones", "Lenoir", "Martin", "Nash", "New Hanover", "Northampton", "Onslow", "Pamlico", "Pender", "Perquimans", "Pitt", "Robeson", "Sampson", "Tyrrell", "Washington",  "Wayne", "Wilson"))
+
+```
+
+```{r drop-na-risk-score}
+
+library(tidyverse)
+##coastal_hurricane_risk <- coastal_hurricane_risk |>
+ ## drop_na(RISK_SCORE)
+
+sf_use_s2(FALSE)
+
+```
+
+```{r Descriptive Statistic}
+# Summary of hurricane risk in the coastal counties
+summary(coastal_hurricane_risk$RISK_SCORE)
+
+# Mean, median, and standard deviation
+mean_score <- mean(coastal_hurricane_risk$RISK_SCORE, na.rm = TRUE)
+median_score <- median(coastal_hurricane_risk$RISK_SCORE, na.rm = TRUE)
+sd_score <- sd(coastal_hurricane_risk$RISK_SCORE, na.rm = TRUE)
+```
+```{r}
+library(tidyverse)
+# Create a thematic map
+tm_map <- tm_shape(coastal_hurricane_risk) +
+  tm_fill(col = "RISK_RATNG",
+          palette = c("orange", "green", "yellow", "red", "darkgreen")) +
+  tm_borders() +
+  tm_layout(title = "Hurricane Risk Categories in Coastal NC",
+            legend.outside = TRUE)
+
+# Plot the map
+
+tm_map
+
+```
+
+### Hot Spot Analysis
+```{r moran-2}
+library(sfdep)
+library(spdep)
+
+# make a list of neighbors
+list_nb2 <- poly2nb(coastal_hurricane_risk, queen=TRUE)
+
+# find the polygons with no neighbors (0)
+empty_nb2 <- which(card(list_nb2) == 0)
+# remove the empty neighbors from the data and create a new dataset
+coastal_hurricane_risk_no_empty <- coastal_hurricane_risk[-empty_nb2,]
+
+
+# create the neighborhoods and weights
+nbhds2 <- st_contiguity(coastal_hurricane_risk_no_empty, queen=TRUE)
+wts2 <- st_weights(nbhds2, style="W")
+
+# calculate the global moran's I statistic
+moran2 <- global_moran(coastal_hurricane_risk_no_empty$RISK_SCORE, nbhds2, wts2)
+moran2
+
+```
+
+
+```{r table-join-add-geometry}
+# rename TRACTFIPS variable to GEOID, to match census data
+names(coastal_hurricane_risk_no_empty)[names(coastal_hurricane_risk_no_empty) == "TRACTFIPS"] <- "GEOID"
+
+
+inner_join <- coastal_nc_data_no_empty |>
+  inner_join(as.data.frame(coastal_hurricane_risk_no_empty), by=join_by("GEOID"))
+
+
+```
+
+```{r hot-spot-analysis-2}
+
+# define the neighborhoods and convert to a list
+nb_coast2 <- poly2nb(inner_join, queen = TRUE)
+coast_binary2 <- nb2listw(nb_coast2, style="B")
+
+# run the global G test on population
+globalG.test(inner_join$RISK_SCORE, coast_binary2)
+
+# now add data per county
+coast_nbs2 <- inner_join |>
+  mutate(
+    nb = st_contiguity(geometry),
+    wt = st_weights(nb),
+    lag = st_lag(RISK_SCORE, nb, wt)
+  )
+
+# now run the hot spot analysis on each county
+coastal_risk_hot_spots <- coast_nbs2 |>
+  mutate(
+    Gi = local_g_perm(RISK_SCORE, nb, wt, nsim=999)
+  ) |>
+  unnest(Gi)
+
+
+```
+
+```{r plot hot-spot}
+# Plot the graph
+coastal_risk_hot_spots |>
+  select(gi,p_folded_sim)|>
+  mutate(
+    classification = case_when(
+      gi > 0 & p_folded_sim <= 0.01 ~"very hot",
+      gi > 0 & p_folded_sim <= 0.05 ~"hot",
+      gi > 0 & p_folded_sim <= 0.1 ~ "somewhat hot",
+      gi < 0 & p_folded_sim <= 0.01 ~ "very cold",
+      gi < 0 & p_folded_sim <= 0.05 ~ "cold",
+      gi < 0 & p_folded_sim <= 0.1 ~ "somewhat cold",
+      TRUE ~ "Insignifican"
+      ),
+    classification = factor(
+      classification, 
+      levels = c("very hot", "hot", "somewhat hot", "Insignificant", "somewhat cold","cold","very cold")
+    )
+  )|>
+  
+ggplot(aes(fill = classification)) +
+  geom_sf(color = "black", lwd = 0.1) + scale_fill_brewer(type = "div", palette = 5) +
+  theme_void()+
+  labs(
+    fill = "Hotspot Analysis of Coastal Risk Scores", 
+    title = "Hot spot for coastal risk scores"
+)
+```
+
+```{r}
+# Identify tracts categorized as low income and high risk (relatively high and very high)
+inner_join <- inner_join |>
+  mutate(overlap = case_when(
+    income_category == "Low Income" & RISK_RATNG == "Very High" ~ TRUE,
+    income_category == "Low Income" & !(RISK_RATNG == "Very High") ~ FALSE,
+    income_category != "Low Income" ~ FALSE
+  ))
+
+  #filter(income_category == "Low Income") |>
+ # filter(RISK_RATNG == "Relatively High" | RISK_RATNG == "Very High")
+
+```
+
+```{r hot-spot-join}
+# Create a join of both hot spot analyses
+hot_spot_join <- inner_join(coastal_hot_spots, as.data.frame(coastal_risk_hot_spots), by="GEOID")
+
+# Add classification based on relationship
+hot_spot_join <- hot_spot_join |>
+  mutate(
+    relationship_classification = case_when(
+      gi.x > 0 & gi.y > 0 ~ "High Income, High Risk",
+      gi.x > 0 & gi.y < 0 ~ "High Income, Low Risk",
+      gi.x < 0 & gi.y < 0 ~ "Low Income, Low Risk",
+      gi.x < 0 & gi.y > 0 ~ "Low Income, High Risk",
+      TRUE ~ "Insignificant"
+    )
+  ) 
+
+# Create the plot
+hot_spot_join_map <- ggplot(hot_spot_join, aes(fill = relationship_classification)) +
+  geom_sf(color = "black", lwd = 0.1) +
+  scale_fill_manual(
+    values = c(
+      "Low Income, High Risk" = "red",
+      "Low Income, Low Risk" = "orange",
+      "High Income, Low Risk" = "green",
+      "High Income, High Risk" = "blue",
+      "Insignificant" = "gray"
+      )
+    ) +
+  theme_void()+
+  labs(
+    fill = "Relationship between High Risk and Low Income", 
+    title = "Hotspot Analysis of Both Variables"
+) 
+
+print(hot_spot_join_map)
+
+```
+
+
+```{r}
+# Create a map displaying areas of co-occurrence
+tm_map <- tm_shape(inner_join) +
+  tm_fill(col = "overlap" ,
+          title = "Co-occurrence of variables",
+          palette = c("white", "green")) +
+  tm_borders() +
+  tm_layout(title = "Areas of Low Income and High Hurricane Risk",
+            legend.outside = TRUE)
+
+# Plot the map
+tm_map
+```
+
+
+# Results
+
+After conducting hotspot analyses for both the median income and hurricane risk score variables, we discovered positive spatial correlation for both. The Global Moran’s I statistic for each variable was positive, showing a tendency towards clustering for income values and hurricane risk scores. 
+Upon completing categorization of each census tract based on income level and hurricane risk index, we were able to complete a join of the datasets to analyze the co-occurrence of low-income levels and high hurricane risk. We created an additional variable that returned as TRUE if the census tract was categorized as both “Low Income” and “Very High” risk and FALSE in any other circumstance. We then mapped the output, which produced a visual of the tracts where low income and high hurricane risk were most closely related. The resulting map highlighted the most vulnerable areas, showing census tracts where low-income populations face the highest hurricane risk. These findings were confirmed by our hotspot analyses, which identified clustering for both variables. We made the hotspot maps to demonstrate that low-income areas were concentrated near high-risk zones, while higher-income areas were generally found in safer regions. The positive Moran’s I statistics confirmed these clustering trends. By using both of our findings from the co-occurrence map and the hotspot map, we were able to better understand where socioeconomic and environmental vulnerabilities might intersect in North Carolina.
+
+
+# Discussion
+
+what you found, what worked and didn't work, what you would do differently
+
+Analyzing the correlation between income and high hurricane risk along the North Carolina coast was challenging due to the variability in median income levels within smaller units like neighborhoods or census tracts. Proximity to flood zones often drives this variability, as these zones have unpredictable spatial patterns that simple statistics cant fully capture. Coastal regions, in particular, show stark contrasts since high-income areas are often adjacent to low-income areas. Hurricane risk itself is generally unevenly distributed, as it is influenced by factors like topography and historical storm paths, which further complicates what should be simple analysis.
+
+Given the limitations of the available data, there wasn’t much more we could have done to address these challenges. County-level data was too broad to capture meaningful detail, and while tract-level data was a better fit, it was still large and complex. Tract data represents the smallest available unit for this type of analysis, so greater granularity wasn’t an option. However, we addressed these issues effectively by using hotspot and co-occurrence analyses. These methods helped us focus on areas where high hurricane risk overlapped with low-income populations, which helped us find meaningful patterns. While the limitations of the dataset couldn’t be entirely overcome, these approaches ensured our analysis was insightful.
